@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Netzplan Editor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="panel">
+        <p class="eyebrow">Netzplan</p>
+        <h1>Einfacher Editor</h1>
+        <p class="intro">
+          Vorgang anlegen, Vorgänger als IDs eintragen und die Zeiten erst per Knopfdruck prüfen und berechnen.
+        </p>
+        <div class="actions">
+          <button id="add-node-btn" type="button">Vorgang hinzufügen</button>
+          <button id="recalculate-btn" type="button" class="secondary">Prüfen & berechnen</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Hinweise</h2>
+        </div>
+        <ul class="tips">
+          <li>`ID`: eindeutiger Name, z. B. `A` oder `V10`</li>
+          <li>`Vorgänger`: kommasepariert, z. B. `A, B`</li>
+          <li>`Dauer`: Zahl in Zeiteinheiten</li>
+          <li>Auch `FAZ`, `FEZ`, `SAZ`, `SEZ`, `GP` und `FP` können eingetragen werden</li>
+          <li>Die Karten können mit der Maus verschoben werden</li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Projektübersicht</h2>
+        </div>
+        <div id="summary" class="summary">
+          <p>Noch keine Vorgänge vorhanden.</p>
+        </div>
+        <div id="validation-results" class="validation-results">
+          <p>Noch keine Prüfung durchgeführt.</p>
+        </div>
+        <div class="solution-actions">
+          <button id="show-solution-btn" type="button" class="secondary" hidden>Lösung anzeigen</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Import / Export</h2>
+        </div>
+        <div class="io-actions">
+          <button id="load-demo-btn" type="button" class="secondary">Beispiel laden</button>
+          <button id="export-btn" type="button" class="secondary">JSON exportieren</button>
+          <label class="import-label" for="import-input">JSON importieren</label>
+          <input id="import-input" type="file" accept="application/json">
+        </div>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <div class="workspace-header">
+        <div>
+          <p class="eyebrow">Arbeitsfläche</p>
+          <h2>Verschiebbare Vorgangskarten</h2>
+        </div>
+        <div class="workspace-tools">
+          <div class="zoom-controls">
+            <button id="zoom-out-btn" type="button" class="secondary">-</button>
+            <span id="zoom-level" class="zoom-level">100 %</span>
+            <button id="zoom-in-btn" type="button" class="secondary">+</button>
+            <button id="zoom-reset-btn" type="button" class="secondary">Reset</button>
+          </div>
+          <p id="status" class="status">Bereit.</p>
+        </div>
+      </div>
+
+      <div id="canvas" class="canvas">
+        <div id="viewport" class="viewport">
+          <div id="scene" class="scene">
+            <svg id="connections" class="connections" aria-hidden="true"></svg>
+            <div id="nodes-layer" class="nodes-layer"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <template id="node-template">
+    <article class="node-card">
+      <div class="node-topline">
+        <label class="outer-field">
+          <span>FAZ</span>
+          <input data-field="faz" type="text" class="result-input" placeholder="?">
+        </label>
+        <label class="outer-field outer-field-right">
+          <span>FEZ</span>
+          <input data-field="fez" type="text" class="result-input" placeholder="?">
+        </label>
+      </div>
+
+      <div class="node-structure">
+        <div class="cell cell-id">
+          <label>
+            <span>Nr.</span>
+            <input data-field="id" type="text" placeholder="A">
+          </label>
+        </div>
+        <div class="cell cell-label">
+          <label>
+            <span>Bezeichnung</span>
+            <input data-field="label" type="text" placeholder="Vorgang">
+          </label>
+        </div>
+        <div class="cell cell-duration">
+          <label>
+            <span>Dauer</span>
+            <input data-field="duration" type="text" placeholder="0">
+          </label>
+        </div>
+        <div class="cell cell-gp">
+          <label>
+            <span>GP</span>
+            <input data-field="gp" type="text" class="result-input result-box-inner" placeholder="?">
+          </label>
+        </div>
+        <div class="cell cell-fp">
+          <label>
+            <span>FP</span>
+            <input data-field="fp" type="text" class="result-input result-box-inner" placeholder="?">
+          </label>
+        </div>
+      </div>
+
+      <div class="node-bottomline">
+        <label class="outer-field">
+          <span>SAZ</span>
+          <input data-field="saz" type="text" class="result-input" placeholder="?">
+        </label>
+        <label class="outer-field outer-field-right">
+          <span>SEZ</span>
+          <input data-field="sez" type="text" class="result-input" placeholder="?">
+        </label>
+      </div>
+
+      <div class="meta-row">
+        <label class="meta-field">
+          <span>Vorgänger</span>
+          <input data-field="predecessors" type="text" placeholder="A, B">
+        </label>
+      </div>
+      <div class="node-footer">
+        <button data-action="duplicate" type="button" class="ghost">Duplizieren</button>
+        <button data-action="delete" type="button" class="ghost danger">Löschen</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
