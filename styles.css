@@ -113,6 +113,12 @@ button.active-toggle {
   color: #fffaf5;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none !important;
+}
+
 .danger-soft {
   background: rgba(167, 29, 49, 0.12) !important;
   color: var(--wrong) !important;
@@ -275,15 +281,22 @@ button.active-toggle {
 }
 
 .scene { transform-origin: 0 0; }
-.connections { pointer-events: none; }
+.connections { pointer-events: auto; }
 
 .connection-line {
   fill: none;
   stroke: var(--line);
   stroke-width: 3;
+  cursor: pointer;
+  pointer-events: stroke;
 }
 
 .connection-line.critical { stroke: var(--critical); }
+.connection-line.is-selected {
+  stroke: var(--accent);
+  stroke-width: 4;
+  filter: drop-shadow(0 0 6px rgba(178, 87, 45, 0.35));
+}
 .nodes-layer { pointer-events: none; }
 
 .node-card {
@@ -301,6 +314,33 @@ button.active-toggle {
 .node-card:active { cursor: grabbing; }
 .node-card.is-critical { border-color: rgba(167, 29, 49, 0.3); background: linear-gradient(180deg, #fff8f8 0%, #ffffff 100%); }
 .node-card.has-error { border-color: rgba(196, 112, 0, 0.45); box-shadow: 0 0 0 3px rgba(196, 112, 0, 0.16); }
+.node-card.is-link-source { box-shadow: 0 0 0 4px rgba(178, 87, 45, 0.28); border-color: rgba(178, 87, 45, 0.55); }
+
+.connection-point {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  border: 2px solid rgba(111, 77, 43, 0.45);
+  border-radius: 999px;
+  background: #fffaf5;
+  transform: translateY(-50%);
+  box-shadow: 0 3px 10px rgba(64, 48, 28, 0.14);
+  z-index: 2;
+}
+
+.connection-point:hover {
+  transform: translateY(-50%) scale(1.08);
+}
+
+.connection-point-in { left: -8px; }
+.connection-point-out { right: -8px; }
+.connection-point.is-pending {
+  background: var(--accent);
+  border-color: var(--accent);
+}
 
 .node-topline, .node-bottomline {
   display: flex;
@@ -396,6 +436,16 @@ button.active-toggle {
   justify-content: space-between;
   gap: 10px;
   margin-top: 12px;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 50;
+  padding: 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: rgba(255, 251, 244, 0.98);
+  box-shadow: var(--shadow);
 }
 
 .table-wrap {

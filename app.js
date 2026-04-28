@@ -13,6 +13,8 @@ const loadBrowserButton = document.getElementById("load-browser-btn");
 const saveProjectButton = document.getElementById("save-project-btn");
 const openProjectButton = document.getElementById("open-project-btn");
 const deleteProjectButton = document.getElementById("delete-project-btn");
+const undoButton = document.getElementById("undo-btn");
+const redoButton = document.getElementById("redo-btn");
 const exportSvgButton = document.getElementById("export-svg-btn");
 const exportPngButton = document.getElementById("export-png-btn");
 const exportPdfButton = document.getElementById("export-pdf-btn");
@@ -26,6 +28,8 @@ const tableViewButton = document.getElementById("table-view-btn");
 const tableBody = document.getElementById("table-body");
 const graphicPanel = document.getElementById("graphic-panel");
 const tablePanel = document.getElementById("table-panel");
+const connectionContextMenu = document.getElementById("connection-context-menu");
+const deleteConnectionButton = document.getElementById("delete-connection-btn");
 
 const NODE_WIDTH = 280;
 const NODE_HEIGHT = 238;
@@ -38,6 +42,11 @@ const state = {
   nextSequence: 1,
   drag: null,
   pan: null,
+  pendingConnectionSourceUid: null,
+  selectedConnection: null,
+  undoStack: [],
+  redoStack: [],
+  isRestoringHistory: false,
   lastErrors: [],
   lastProjectDuration: 0,
   expectedValues: new Map(),
@@ -79,6 +88,168 @@ function createEmptyNode(x = 80, y = 80) {
   };
 }
 
+function cloneSerializableState() {
+  return JSON.parse(JSON.stringify(getSerializableState()));
+}
+
+function pushHistorySnapshot() {
+  if (state.isRestoringHistory) {
+    return;
+  }
+
+  state.undoStack.push(cloneSerializableState());
+  if (state.undoStack.length > 10) {
+    state.undoStack.shift();
+  }
+  state.redoStack = [];
+  syncHistoryButtons();
+}
+
+function applySnapshot(snapshot, message) {
+  state.isRestoringHistory = true;
+  state.projectName = snapshot.projectName || "Mein Netzplan";
+  state.nodes = normalizeNodes(snapshot.nodes || []);
+  state.zoom = typeof snapshot.zoom === "number" ? snapshot.zoom : 0.8;
+  state.offsetX = typeof snapshot.offsetX === "number" ? snapshot.offsetX : 160;
+  state.offsetY = typeof snapshot.offsetY === "number" ? snapshot.offsetY : 120;
+  state.mode = snapshot.mode === "solution" ? "solution" : "task";
+  state.view = snapshot.view === "table" ? "table" : "graphic";
+  state.lastErrors = [];
+  state.lastProjectDuration = 0;
+  state.expectedValues = new Map();
+  state.isDirty = true;
+  clearPendingConnection();
+  clearSelectedConnection();
+  closeConnectionContextMenu();
+  clearCalculatedFields();
+  statusElement.textContent = message;
+  render();
+  state.isRestoringHistory = false;
+  syncHistoryButtons();
+}
+
+function undoLastChange() {
+  if (state.undoStack.length === 0) {
+    statusElement.textContent = "Nichts zum RÃ¼ckgÃ¤ngig machen.";
+    return false;
+  }
+
+  const snapshot = state.undoStack.pop();
+  state.redoStack.push(cloneSerializableState());
+  if (state.redoStack.length > 10) {
+    state.redoStack.shift();
+  }
+  applySnapshot(snapshot, "Ã„nderung rÃ¼ckgÃ¤ngig gemacht.");
+  syncHistoryButtons();
+  return true;
+}
+
+function redoLastChange() {
+  if (state.redoStack.length === 0) {
+    statusElement.textContent = "Nichts zum Wiederherstellen.";
+    return false;
+  }
+
+  const snapshot = state.redoStack.pop();
+  state.undoStack.push(cloneSerializableState());
+  if (state.undoStack.length > 10) {
+    state.undoStack.shift();
+  }
+  applySnapshot(snapshot, "Ã„nderung wiederhergestellt.");
+  syncHistoryButtons();
+  return true;
+}
+
+function attachHistoryToEditableInput(element) {
+  element.addEventListener("focus", () => {
+    if (element.dataset.historyCaptured === "true") {
+      return;
+    }
+    pushHistorySnapshot();
+    element.dataset.historyCaptured = "true";
+  });
+
+  element.addEventListener("blur", () => {
+    delete element.dataset.historyCaptured;
+  });
+}
+
+function syncHistoryButtons() {
+  if (undoButton) {
+    undoButton.disabled = state.undoStack.length === 0;
+  }
+  if (redoButton) {
+    redoButton.disabled = state.redoStack.length === 0;
+  }
+}
+
+function captureFocusState() {
+  const activeElement = document.activeElement;
+  if (!activeElement || activeElement === document.body) {
+    return null;
+  }
+
+  if (activeElement === projectNameInput) {
+    return {
+      type: "project-name",
+      selectionStart: activeElement.selectionStart ?? null,
+      selectionEnd: activeElement.selectionEnd ?? null,
+    };
+  }
+
+  const field = activeElement.dataset?.field;
+  if (!field) {
+    return null;
+  }
+
+  const card = activeElement.closest(".node-card");
+  if (card?.dataset.uid) {
+    return {
+      type: "node-field",
+      uid: card.dataset.uid,
+      field,
+      selectionStart: activeElement.selectionStart ?? null,
+      selectionEnd: activeElement.selectionEnd ?? null,
+    };
+  }
+
+  if (activeElement.dataset.uid) {
+    return {
+      type: "table-field",
+      uid: activeElement.dataset.uid,
+      field,
+      selectionStart: activeElement.selectionStart ?? null,
+      selectionEnd: activeElement.selectionEnd ?? null,
+    };
+  }
+
+  return null;
+}
+
+function restoreFocusState(focusState) {
+  if (!focusState) {
+    return;
+  }
+
+  let target = null;
+  if (focusState.type === "project-name") {
+    target = projectNameInput;
+  } else if (focusState.type === "node-field") {
+    target = document.querySelector(`.node-card[data-uid="${focusState.uid}"] [data-field="${focusState.field}"]`);
+  } else if (focusState.type === "table-field") {
+    target = document.querySelector(`#table-body [data-uid="${focusState.uid}"][data-field="${focusState.field}"]`);
+  }
+
+  if (!target) {
+    return;
+  }
+
+  target.focus({ preventScroll: true });
+  if (typeof target.setSelectionRange === "function" && focusState.selectionStart !== null && focusState.selectionEnd !== null) {
+    target.setSelectionRange(focusState.selectionStart, focusState.selectionEnd);
+  }
+}
+
 function normalizeNodes(rawNodes) {
   state.nextSequence = 1;
   return rawNodes.map((node, index) => {
@@ -106,6 +277,180 @@ function predecessorList(node) {
     .filter(Boolean);
 }
 
+function addConnection(sourceUid, targetUid) {
+  if (!sourceUid || !targetUid || sourceUid === targetUid) {
+    return false;
+  }
+
+  const sourceNode = state.nodes.find((node) => node.uid === sourceUid);
+  const targetNode = state.nodes.find((node) => node.uid === targetUid);
+  if (!sourceNode || !targetNode || !sourceNode.id || !targetNode.id) {
+    return false;
+  }
+
+  const predecessors = predecessorList(targetNode);
+  if (predecessors.includes(sourceNode.id)) {
+    return false;
+  }
+
+  predecessors.push(sourceNode.id);
+  targetNode.predecessors = predecessors.join(", ");
+  return true;
+}
+
+function canAddConnection(sourceUid, targetUid) {
+  if (!sourceUid || !targetUid || sourceUid === targetUid) {
+    return false;
+  }
+
+  const sourceNode = state.nodes.find((node) => node.uid === sourceUid);
+  const targetNode = state.nodes.find((node) => node.uid === targetUid);
+  if (!sourceNode || !targetNode || !sourceNode.id || !targetNode.id) {
+    return false;
+  }
+
+  return !predecessorList(targetNode).includes(sourceNode.id);
+}
+
+function removeConnection(sourceId, targetUid) {
+  const targetNode = state.nodes.find((node) => node.uid === targetUid);
+  if (!targetNode) {
+    return false;
+  }
+
+  const currentPredecessors = predecessorList(targetNode);
+  const nextPredecessors = currentPredecessors.filter((entry) => entry !== sourceId);
+  if (nextPredecessors.length === currentPredecessors.length) {
+    return false;
+  }
+
+  targetNode.predecessors = nextPredecessors.join(", ");
+  return true;
+}
+
+function clearPendingConnection() {
+  state.pendingConnectionSourceUid = null;
+}
+
+function clearSelectedConnection() {
+  state.selectedConnection = null;
+}
+
+function selectConnection(sourceId, targetUid) {
+  if (document.activeElement && typeof document.activeElement.blur === "function") {
+    document.activeElement.blur();
+  }
+  state.selectedConnection = { sourceId, targetUid };
+}
+
+function isSelectedConnection(sourceId, targetUid) {
+  return (
+    state.selectedConnection &&
+    state.selectedConnection.sourceId === sourceId &&
+    state.selectedConnection.targetUid === targetUid
+  );
+}
+
+function closeConnectionContextMenu() {
+  if (!connectionContextMenu) {
+    return;
+  }
+  delete connectionContextMenu.dataset.sourceId;
+  delete connectionContextMenu.dataset.targetUid;
+  connectionContextMenu.classList.add("hidden");
+}
+
+function openConnectionContextMenu(clientX, clientY) {
+  if (!connectionContextMenu) {
+    return;
+  }
+  if (state.selectedConnection) {
+    connectionContextMenu.dataset.sourceId = state.selectedConnection.sourceId;
+    connectionContextMenu.dataset.targetUid = state.selectedConnection.targetUid;
+  }
+  connectionContextMenu.style.left = `${clientX}px`;
+  connectionContextMenu.style.top = `${clientY}px`;
+  connectionContextMenu.classList.remove("hidden");
+}
+
+function deleteConnectionByIds(sourceId, targetUid) {
+  if (!sourceId || !targetUid) {
+    return false;
+  }
+
+  pushHistorySnapshot();
+  closeConnectionContextMenu();
+  clearPendingConnection();
+  clearSelectedConnection();
+  if (removeConnection(sourceId, targetUid)) {
+    markDirty("Pfeil entfernt. Bitte prÃ¼fen.");
+    return true;
+  }
+
+  render();
+  return false;
+}
+
+function deleteSelectedConnection() {
+  if (!state.selectedConnection) {
+    return false;
+  }
+
+  const { sourceId, targetUid } = state.selectedConnection;
+  return deleteConnectionByIds(sourceId, targetUid);
+}
+
+function handleConnectorClick(uid, type) {
+  closeConnectionContextMenu();
+  clearSelectedConnection();
+
+  if (type === "out") {
+    if (state.pendingConnectionSourceUid === uid) {
+      clearPendingConnection();
+      statusElement.textContent = "Verbindungsauswahl aufgehoben.";
+    } else {
+      state.pendingConnectionSourceUid = uid;
+      statusElement.textContent = "Startpunkt gewÃ¤hlt. Jetzt Eingangs-Punkt einer anderen Kachel anklicken.";
+    }
+    render();
+    return;
+  }
+
+  const sourceUid = state.pendingConnectionSourceUid;
+  if (!sourceUid) {
+    statusElement.textContent = "Bitte zuerst einen Ausgangs-Punkt auswÃ¤hlen.";
+    return;
+  }
+
+  const canCreateConnection = canAddConnection(sourceUid, uid);
+  if (canCreateConnection) {
+    pushHistorySnapshot();
+  }
+  const didAddConnection = addConnection(sourceUid, uid);
+  clearPendingConnection();
+  if (didAddConnection) {
+    markDirty("Pfeil gesetzt. Bitte prÃ¼fen.");
+  } else {
+    statusElement.textContent = "Pfeil konnte nicht gesetzt werden.";
+    render();
+  }
+}
+
+function getConnectorCenter(node, cardElement, selector) {
+  const connector = cardElement.querySelector(selector);
+  if (!connector) {
+    return {
+      x: node.x + (selector.includes("out") ? cardElement.offsetWidth : 0),
+      y: node.y + cardElement.offsetHeight / 2,
+    };
+  }
+
+  return {
+    x: node.x + connector.offsetLeft + connector.offsetWidth / 2,
+    y: node.y + connector.offsetTop + connector.offsetHeight / 2,
+  };
+}
+
 function clearCalculatedFields() {
   state.nodes.forEach((node) => {
     node.error = "";
@@ -113,11 +458,14 @@ function clearCalculatedFields() {
   });
 }
 
-function markDirty(message = "Änderungen vorhanden. Bitte prüfen.") {
+function markDirty(message = "Ãƒâ€žnderungen vorhanden. Bitte prÃƒÂ¼fen.") {
   state.isDirty = true;
   state.lastErrors = [];
   state.lastProjectDuration = 0;
   state.expectedValues = new Map();
+  clearPendingConnection();
+  clearSelectedConnection();
+  closeConnectionContextMenu();
   clearCalculatedFields();
   statusElement.textContent = message;
   render();
@@ -240,14 +588,14 @@ function loadFromBrowser() {
 
     const parsed = JSON.parse(raw);
     if (!parsed || !Array.isArray(parsed.nodes)) {
-      throw new Error("Kein gültiger Speicherstand gefunden.");
+      throw new Error("Kein gÃƒÂ¼ltiger Speicherstand gefunden.");
     }
 
     state.nodes = normalizeNodes(parsed.nodes);
     state.zoom = typeof parsed.zoom === "number" ? parsed.zoom : 0.8;
     state.offsetX = typeof parsed.offsetX === "number" ? parsed.offsetX : 160;
     state.offsetY = typeof parsed.offsetY === "number" ? parsed.offsetY : 120;
-    markDirty("Gespeicherten Plan geladen. Bitte prüfen.");
+    markDirty("Gespeicherten Plan geladen. Bitte prÃƒÂ¼fen.");
   } catch (error) {
     statusElement.textContent = "Gespeicherten Plan konnte nicht geladen werden.";
   }
@@ -386,8 +734,8 @@ function validateAndCalculate() {
     }
 
     if (!/^\d+([.,]\d+)?$/.test(durationValue)) {
-      node.error = "Ungültige Dauer";
-      errors.push(`Die Dauer von "${normalizedId}" ist keine gültige Zahl.`);
+      node.error = "UngÃƒÂ¼ltige Dauer";
+      errors.push(`Die Dauer von "${normalizedId}" ist keine gÃƒÂ¼ltige Zahl.`);
       return;
     }
 
@@ -422,8 +770,8 @@ function validateAndCalculate() {
     predecessorList(node).forEach((predecessorId) => {
       const predecessorNode = byId.get(predecessorId);
       if (!predecessorNode) {
-        node.error = `Unbekannter Vorgänger: ${predecessorId}`;
-        errors.push(`Beim Vorgang "${node.id}" ist der Vorgänger "${predecessorId}" unbekannt.`);
+        node.error = `Unbekannter VorgÃƒÂ¤nger: ${predecessorId}`;
+        errors.push(`Beim Vorgang "${node.id}" ist der VorgÃƒÂ¤nger "${predecessorId}" unbekannt.`);
         return;
       }
 
@@ -453,7 +801,7 @@ function validateAndCalculate() {
   }
 
   if (order.length !== byId.size) {
-    errors.push("Es gibt einen Zyklus in den Abhängigkeiten. Ein Netzplan darf keine Kreisbezüge haben.");
+    errors.push("Es gibt einen Zyklus in den AbhÃƒÂ¤ngigkeiten. Ein Netzplan darf keine KreisbezÃƒÂ¼ge haben.");
   }
 
   for (const nodeId of order) {
@@ -503,7 +851,7 @@ function validateAndCalculate() {
           errors.push(`Beim Vorgang "${node.id}" fehlt der Wert ${field.toUpperCase()}.`);
           node.error = "Fehlende Ergebnisse";
         } else if (userValue !== expectedValue) {
-          errors.push(`Beim Vorgang "${node.id}" ist ${field.toUpperCase()} falsch. Richtig wäre ${expectedValue}.`);
+          errors.push(`Beim Vorgang "${node.id}" ist ${field.toUpperCase()} falsch. Richtig wÃƒÂ¤re ${expectedValue}.`);
           node.error = "Falsche Ergebnisse";
         }
       });
@@ -550,7 +898,7 @@ function render() {
 
     fragment.querySelector("[data-action='delete']").addEventListener("click", () => {
       state.nodes = state.nodes.filter((entry) => entry.uid !== node.uid);
-      markDirty("Vorgang gelöscht. Bitte prüfen.");
+      markDirty("Vorgang gelÃƒÂ¶scht. Bitte prÃƒÂ¼fen.");
     });
 
     fragment.querySelector("[data-action='duplicate']").addEventListener("click", () => {
@@ -560,7 +908,7 @@ function render() {
       duplicate.duration = node.duration;
       duplicate.predecessors = node.predecessors;
       state.nodes.push(duplicate);
-      markDirty("Vorgang kopiert. Bitte prüfen.");
+      markDirty("Vorgang kopiert. Bitte prÃƒÂ¼fen.");
     });
 
     card.addEventListener("pointerdown", (event) => startDrag(event, node.uid));
@@ -583,32 +931,32 @@ function renderSummary() {
     .map((node) => node.id);
 
   summaryElement.innerHTML = [
-    `<p><strong>Vorgänge:</strong> ${state.nodes.length}</p>`,
+    `<p><strong>VorgÃƒÂ¤nge:</strong> ${state.nodes.length}</p>`,
     `<p><strong>Projektdauer:</strong> ${state.lastProjectDuration}</p>`,
     `<p><strong>Kritischer Pfad:</strong> ${criticalPath.length ? criticalPath.join(" -> ") : "noch nicht berechnet"}</p>`,
   ].join("");
 
   if (state.nodes.length === 0) {
-    validationResultsElement.innerHTML = "<p>Noch keine Vorgänge vorhanden.</p>";
+    validationResultsElement.innerHTML = "<p>Noch keine VorgÃƒÂ¤nge vorhanden.</p>";
     statusElement.textContent = "Bereit.";
     showSolutionButton.hidden = true;
     return;
   }
 
   if (state.isDirty) {
-    validationResultsElement.innerHTML = "<p>Noch nicht geprüft. Drücke auf \"Prüfen & berechnen\".</p>";
+    validationResultsElement.innerHTML = "<p>Noch nicht geprÃƒÂ¼ft. DrÃƒÂ¼cke auf \"PrÃƒÂ¼fen & berechnen\".</p>";
     showSolutionButton.hidden = true;
     return;
   }
 
   if (state.lastErrors.length > 0) {
     validationResultsElement.innerHTML = `<p><strong>Fehler gefunden:</strong></p><ul>${state.lastErrors.map((error) => `<li>${error}</li>`).join("")}</ul>`;
-    statusElement.textContent = "Bitte Eingaben prüfen.";
+    statusElement.textContent = "Bitte Eingaben prÃƒÂ¼fen.";
     showSolutionButton.hidden = false;
     return;
   }
 
-  validationResultsElement.innerHTML = "<p><strong>Prüfung:</strong> Alles sieht korrekt aus.</p>";
+  validationResultsElement.innerHTML = "<p><strong>PrÃƒÂ¼fung:</strong> Alles sieht korrekt aus.</p>";
   statusElement.textContent = "Berechnung erfolgreich.";
   showSolutionButton.hidden = true;
 }
@@ -647,9 +995,6 @@ function drawConnections() {
       return;
     }
 
-    const targetX = node.x;
-    const targetY = node.y + targetElement.offsetHeight / 2;
-
     predecessorList(node).forEach((predecessorId) => {
       const predecessorNode = state.nodes.find((entry) => entry.id === predecessorId);
       const sourceElement = elementById.get(predecessorId);
@@ -657,17 +1002,45 @@ function drawConnections() {
         return;
       }
 
-      const sourceX = predecessorNode.x + sourceElement.offsetWidth;
-      const sourceY = predecessorNode.y + sourceElement.offsetHeight / 2;
+      const { x: sourceX, y: sourceY } = getConnectorCenter(predecessorNode, sourceElement, ".connection-point-out");
+      const { x: targetX, y: targetY } = getConnectorCenter(node, targetElement, ".connection-point-in");
       const midX = (sourceX + targetX) / 2;
       const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
       line.setAttribute("d", `M ${sourceX} ${sourceY} C ${midX} ${sourceY}, ${midX} ${targetY}, ${targetX} ${targetY}`);
       line.setAttribute("class", "connection-line");
       line.setAttribute("marker-end", "url(#arrowhead)");
+      line.dataset.sourceId = predecessorNode.id;
+      line.dataset.targetUid = node.uid;
 
       if (predecessorNode.critical && node.critical) {
         line.classList.add("critical");
       }
+      line.classList.toggle("is-selected", isSelectedConnection(predecessorNode.id, node.uid));
+      line.addEventListener("pointerdown", (event) => {
+        event.stopPropagation();
+      });
+      line.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeConnectionContextMenu();
+        selectConnection(predecessorNode.id, node.uid);
+        clearPendingConnection();
+        statusElement.textContent = "Pfeil ausgewÃ¤hlt. Mit Entf lÃ¶schen oder Rechtsklick fÃ¼r MenÃ¼.";
+        render();
+      });
+      line.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        deleteConnectionByIds(predecessorNode.id, node.uid);
+      });
+      line.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        selectConnection(predecessorNode.id, node.uid);
+        clearPendingConnection();
+        statusElement.textContent = "Pfeil ausgewÃ¤hlt. KontextmenÃ¼ geÃ¶ffnet.";
+        render();
+        openConnectionContextMenu(event.clientX, event.clientY);
+      });
 
       connectionsLayer.appendChild(line);
     });
@@ -683,6 +1056,8 @@ function startDrag(event, uid) {
   if (!node) {
     return;
   }
+
+  pushHistorySnapshot();
 
   state.drag = {
     uid,
@@ -825,11 +1200,11 @@ function importJson(file) {
     try {
       const parsed = JSON.parse(String(reader.result));
       if (!Array.isArray(parsed)) {
-        throw new Error("Die JSON-Datei muss eine Liste von Vorgängen enthalten.");
+        throw new Error("Die JSON-Datei muss eine Liste von VorgÃƒÂ¤ngen enthalten.");
       }
 
       state.nodes = normalizeNodes(parsed);
-      markDirty("Import geladen. Bitte prüfen.");
+      markDirty("Import geladen. Bitte prÃƒÂ¼fen.");
     } catch (error) {
       statusElement.textContent = error.message;
     }
@@ -849,14 +1224,14 @@ function importSvg(file) {
 
       const parsed = JSON.parse(match[1]);
       if (!Array.isArray(parsed.nodes)) {
-        throw new Error("Die SVG enthält keine gültigen Netzplan-Daten.");
+        throw new Error("Die SVG enthÃƒÂ¤lt keine gÃƒÂ¼ltigen Netzplan-Daten.");
       }
 
       state.nodes = normalizeNodes(parsed.nodes);
       state.zoom = typeof parsed.zoom === "number" ? parsed.zoom : state.zoom;
       state.offsetX = typeof parsed.offsetX === "number" ? parsed.offsetX : state.offsetX;
       state.offsetY = typeof parsed.offsetY === "number" ? parsed.offsetY : state.offsetY;
-      markDirty("SVG importiert. Bitte prüfen.");
+      markDirty("SVG importiert. Bitte prÃƒÂ¼fen.");
     } catch (error) {
       statusElement.textContent = error.message;
     }
@@ -865,8 +1240,9 @@ function importSvg(file) {
 }
 
 document.getElementById("add-node-btn").addEventListener("click", () => {
+  pushHistorySnapshot();
   state.nodes.push(createEmptyNode(80 + state.nodes.length * 24, 80 + state.nodes.length * 24));
-  markDirty("Vorgang hinzugefügt. Bitte prüfen.");
+  markDirty("Vorgang hinzugefÃƒÂ¼gt. Bitte prÃƒÂ¼fen.");
 });
 
 document.getElementById("recalculate-btn").addEventListener("click", validateAndCalculate);
@@ -878,12 +1254,6 @@ saveBrowserButton.addEventListener("click", saveToBrowser);
 loadBrowserButton.addEventListener("click", loadFromBrowser);
 document.getElementById("zoom-in-btn").addEventListener("click", () => setZoom(state.zoom + 0.1));
 document.getElementById("zoom-out-btn").addEventListener("click", () => setZoom(state.zoom - 0.1));
-document.getElementById("zoom-reset-btn").addEventListener("click", () => {
-  state.zoom = 0.8;
-  state.offsetX = 160;
-  state.offsetY = 120;
-  applyViewport();
-});
 showSolutionButton.addEventListener("click", applySolutionValues);
 document.getElementById("export-btn").addEventListener("click", exportJson);
 exportSvgButton.addEventListener("click", () => {
@@ -917,7 +1287,7 @@ document.getElementById("import-input").addEventListener("change", (event) => {
   } else if (file && file.name.toLowerCase().endsWith(".svg")) {
     importSvg(file);
   } else if (file) {
-    statusElement.textContent = "Bitte eine JSON- oder SVG-Datei wählen.";
+    statusElement.textContent = "Bitte eine JSON- oder SVG-Datei wÃƒÂ¤hlen.";
   }
   event.target.value = "";
 });
@@ -927,6 +1297,70 @@ canvas.addEventListener("wheel", onCanvasWheel, { passive: false });
 window.addEventListener("pointermove", onPointerMove);
 window.addEventListener("pointerup", onPointerUp);
 window.addEventListener("resize", render);
+window.addEventListener("keydown", (event) => {
+  if (event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === "z") {
+    if (undoLastChange()) {
+      event.preventDefault();
+    }
+    return;
+  }
+
+  if (event.ctrlKey && event.key.toLowerCase() === "y") {
+    if (redoLastChange()) {
+      event.preventDefault();
+    }
+    return;
+  }
+
+  if (event.key === "Delete") {
+    const activeElement = document.activeElement;
+    const isEditableFocused =
+      activeElement &&
+      (activeElement.tagName === "INPUT" ||
+        activeElement.tagName === "TEXTAREA" ||
+        activeElement.tagName === "SELECT" ||
+        activeElement.isContentEditable);
+    if (isEditableFocused && !state.selectedConnection) {
+      return;
+    }
+    if (deleteSelectedConnection()) {
+      event.preventDefault();
+    }
+  } else if (event.key === "Escape") {
+    closeConnectionContextMenu();
+    clearPendingConnection();
+    clearSelectedConnection();
+    render();
+  }
+});
+window.addEventListener("click", (event) => {
+  if (event.target.closest(".connection-line")) {
+    return;
+  }
+  if (event.target.closest(".context-menu")) {
+    return;
+  }
+  closeConnectionContextMenu();
+  if (state.selectedConnection || state.pendingConnectionSourceUid) {
+    clearSelectedConnection();
+    clearPendingConnection();
+    render();
+  }
+});
+
+connectionsLayer.addEventListener("contextmenu", (event) => {
+  if (!event.target.closest(".connection-line")) {
+    closeConnectionContextMenu();
+    clearSelectedConnection();
+    render();
+  }
+});
+
+deleteConnectionButton.addEventListener("click", () => {
+  const sourceId = connectionContextMenu?.dataset.sourceId || state.selectedConnection?.sourceId;
+  const targetUid = connectionContextMenu?.dataset.targetUid || state.selectedConnection?.targetUid;
+  deleteConnectionByIds(sourceId, targetUid);
+});
 
 try {
   const savedState = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -979,9 +1413,12 @@ function renderTable() {
       const cell = document.createElement("td");
       const input = document.createElement("input");
       input.className = "table-input";
+      input.dataset.uid = node.uid;
+      input.dataset.field = field;
       input.value = getDisplayValue(node, field);
       input.disabled = state.mode === "solution" && ["faz", "fez", "saz", "sez", "gp", "fp"].includes(field);
       applyFieldState(input, node, field);
+      attachHistoryToEditableInput(input);
       input.addEventListener("input", (event) => {
         node[field] = event.target.value;
         markDirty();
@@ -1030,7 +1467,7 @@ function openSelectedProject() {
   const projects = readSavedProjects();
   const index = Number(savedProjectsSelect.value);
   if (!Number.isInteger(index) || !projects[index]) {
-    statusElement.textContent = "Bitte ein Projekt ausw�hlen.";
+    statusElement.textContent = "Bitte ein Projekt auswÃ¤hlen.";
     return;
   }
   const project = projects[index];
@@ -1041,20 +1478,20 @@ function openSelectedProject() {
   state.offsetY = typeof project.offsetY === "number" ? project.offsetY : 120;
   state.mode = project.mode === "solution" ? "solution" : "task";
   state.view = project.view === "table" ? "table" : "graphic";
-  markDirty("Projekt geladen. Bitte pr�fen.");
+  markDirty("Projekt geladen. Bitte prÃ¼fen.");
 }
 
 function deleteSelectedProject() {
   const projects = readSavedProjects();
   const index = Number(savedProjectsSelect.value);
   if (!Number.isInteger(index) || !projects[index]) {
-    statusElement.textContent = "Bitte ein Projekt ausw�hlen.";
+    statusElement.textContent = "Bitte ein Projekt auswÃ¤hlen.";
     return;
   }
   projects.splice(index, 1);
   writeSavedProjects(projects);
   refreshSavedProjectsList();
-  statusElement.textContent = "Projekt gel�scht.";
+  statusElement.textContent = "Projekt gelÃ¶scht.";
 }
 
 function renderSummary() {
@@ -1065,36 +1502,38 @@ function renderSummary() {
 
   summaryElement.innerHTML = [
     `<p><strong>Projekt:</strong> ${state.projectName || "Mein Netzplan"}</p>`,
-    `<p><strong>Vorg�nge:</strong> ${state.nodes.length}</p>`,
+    `<p><strong>VorgÃ¤nge:</strong> ${state.nodes.length}</p>`,
     `<p><strong>Projektdauer:</strong> ${state.lastProjectDuration}</p>`,
     `<p><strong>Kritischer Pfad:</strong> ${criticalPath.length ? criticalPath.join(" -> ") : "noch nicht berechnet"}</p>`,
   ].join("");
 
   if (state.nodes.length === 0) {
-    validationResultsElement.innerHTML = "<p>Noch keine Vorg�nge vorhanden.</p>";
+    validationResultsElement.innerHTML = "<p>Noch keine VorgÃ¤nge vorhanden.</p>";
     statusElement.textContent = "Bereit.";
     showSolutionButton.hidden = true;
     return;
   }
   if (state.isDirty) {
-    validationResultsElement.innerHTML = '<p>Noch nicht gepr�ft. Dr�cke auf "Pr�fen & berechnen".</p>';
-    statusElement.textContent = "�nderungen vorhanden.";
+    validationResultsElement.innerHTML = '<p>Noch nicht geprÃ¼ft. DrÃ¼cke auf "PrÃ¼fen & berechnen".</p>';
+    statusElement.textContent = "Ã„nderungen vorhanden.";
     showSolutionButton.hidden = true;
     return;
   }
   if (state.lastErrors.length > 0) {
     validationResultsElement.innerHTML = `<p><strong>Fehler gefunden:</strong></p><ul>${state.lastErrors.map((error) => `<li>${error}</li>`).join("")}</ul>`;
-    statusElement.textContent = "Bitte Eingaben pr�fen.";
+    statusElement.textContent = "Bitte Eingaben prÃ¼fen.";
     showSolutionButton.hidden = false;
     return;
   }
-  validationResultsElement.innerHTML = "<p><strong>Pr�fung:</strong> Alles sieht korrekt aus.</p>";
+  validationResultsElement.innerHTML = "<p><strong>PrÃ¼fung:</strong> Alles sieht korrekt aus.</p>";
   statusElement.textContent = "Berechnung erfolgreich.";
   showSolutionButton.hidden = true;
 }
 
 function render() {
+  const focusState = captureFocusState();
   applyViewport();
+  syncHistoryButtons();
   projectNameInput.value = state.projectName;
   taskModeButton.classList.toggle("active-toggle", state.mode === "task");
   solutionModeButton.classList.toggle("active-toggle", state.mode === "solution");
@@ -1110,12 +1549,23 @@ function render() {
     card.style.top = `${node.y}px`;
     card.classList.toggle("is-critical", node.critical);
     card.classList.toggle("has-error", Boolean(node.error));
+    card.classList.toggle("is-link-source", state.pendingConnectionSourceUid === node.uid);
+    fragment.querySelectorAll("[data-connector]").forEach((element) => {
+      const type = element.dataset.connector;
+      element.classList.toggle("is-pending", type === "out" && state.pendingConnectionSourceUid === node.uid);
+      element.addEventListener("click", (event) => {
+        event.stopPropagation();
+        handleConnectorClick(node.uid, type);
+      });
+      element.addEventListener("pointerdown", (event) => event.stopPropagation());
+    });
     fragment.querySelectorAll("[data-field]").forEach((element) => {
       const field = element.dataset.field;
       element.value = getDisplayValue(node, field);
       const isResultField = ["faz", "fez", "saz", "sez", "gp", "fp"].includes(field);
       element.disabled = state.mode === "solution" && isResultField;
       applyFieldState(element, node, field);
+      attachHistoryToEditableInput(element);
       element.addEventListener("input", (event) => {
         node[field] = event.target.value;
         markDirty();
@@ -1123,10 +1573,12 @@ function render() {
       element.addEventListener("pointerdown", (event) => event.stopPropagation());
     });
     fragment.querySelector("[data-action='delete']").addEventListener("click", () => {
+      pushHistorySnapshot();
       state.nodes = state.nodes.filter((entry) => entry.uid !== node.uid);
-      markDirty("Vorgang gel�scht. Bitte pr�fen.");
+      markDirty("Vorgang gelÃ¶scht. Bitte prÃ¼fen.");
     });
     fragment.querySelector("[data-action='duplicate']").addEventListener("click", () => {
+      pushHistorySnapshot();
       const duplicate = createEmptyNode(node.x + 32, node.y + 32);
       duplicate.id = `${node.id}_Kopie`;
       duplicate.label = node.label;
@@ -1139,7 +1591,7 @@ function render() {
       duplicate.gp = node.gp;
       duplicate.fp = node.fp;
       state.nodes.push(duplicate);
-      markDirty("Vorgang kopiert. Bitte pr�fen.");
+      markDirty("Vorgang kopiert. Bitte prÃ¼fen.");
     });
     card.addEventListener("pointerdown", (event) => startDrag(event, node.uid));
     nodesLayer.appendChild(fragment);
@@ -1149,9 +1601,12 @@ function render() {
   renderTable();
   renderSummary();
   refreshSavedProjectsList();
+  restoreFocusState(focusState);
 }
 
 saveProjectButton.addEventListener("click", saveNamedProject);
+undoButton.addEventListener("click", undoLastChange);
+redoButton.addEventListener("click", redoLastChange);
 openProjectButton.addEventListener("click", openSelectedProject);
 deleteProjectButton.addEventListener("click", deleteSelectedProject);
 taskModeButton.addEventListener("click", () => setMode("task"));
@@ -1161,8 +1616,10 @@ tableViewButton.addEventListener("click", () => setView("table"));
 printButton.addEventListener("click", () => window.print());
 projectNameInput.addEventListener("input", () => {
   state.projectName = projectNameInput.value.trim() || "Mein Netzplan";
+  markDirty("Projektname geÃ¤ndert. Bitte prÃ¼fen.");
   saveToBrowser();
 });
+attachHistoryToEditableInput(projectNameInput);
 refreshSavedProjectsList();
 setView(state.view);
 render();
@@ -1178,7 +1635,7 @@ function loadFromBrowser() {
     }
     const parsed = JSON.parse(raw);
     if (!parsed || !Array.isArray(parsed.nodes)) {
-      throw new Error("Kein g�ltiger Speicherstand gefunden.");
+      throw new Error("Kein gÃ¼ltiger Speicherstand gefunden.");
     }
     state.projectName = parsed.projectName || "Mein Netzplan";
     state.nodes = normalizeNodes(parsed.nodes);
@@ -1187,7 +1644,7 @@ function loadFromBrowser() {
     state.offsetY = typeof parsed.offsetY === "number" ? parsed.offsetY : 120;
     state.mode = parsed.mode === "solution" ? "solution" : "task";
     state.view = parsed.view === "table" ? "table" : "graphic";
-    markDirty("Gespeicherten Plan geladen. Bitte pr�fen.");
+    markDirty("Gespeicherten Plan geladen. Bitte prÃ¼fen.");
   } catch (error) {
     statusElement.textContent = "Gespeicherten Plan konnte nicht geladen werden.";
   }
@@ -1208,10 +1665,12 @@ function importJson(file) {
       state.offsetY = typeof parsed.offsetY === "number" ? parsed.offsetY : state.offsetY;
       state.mode = parsed.mode === "solution" ? "solution" : "task";
       state.view = parsed.view === "table" ? "table" : "graphic";
-      markDirty("Import geladen. Bitte pr�fen.");
+      markDirty("Import geladen. Bitte prÃ¼fen.");
     } catch (error) {
       statusElement.textContent = error.message;
     }
   };
   reader.readAsText(file);
 }
+
+

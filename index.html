@@ -14,7 +14,9 @@
         <h1>Einfacher Editor</h1>
         <p class="intro">Netzpläne erstellen, prüfen, speichern, drucken und als Grafik oder PDF exportieren.</p>
         <div class="actions">
-          <button id="add-node-btn" type="button">Vorgang hinzufügen</button>
+          <button id="add-node-btn" type="button">Neue Kachel</button>
+          <button id="undo-btn" type="button" class="secondary">Rückgängig</button>
+          <button id="redo-btn" type="button" class="secondary">Wiederherstellen</button>
           <button id="recalculate-btn" type="button" class="secondary">Prüfen & berechnen</button>
         </div>
       </div>
@@ -67,14 +69,16 @@
 
       <div class="panel">
         <div class="panel-header">
-          <h2>Hinweise</h2>
+          <h2>Kurzanleitung</h2>
         </div>
         <ul class="tips">
-          <li><code>ID</code>: eindeutiger Name, z. B. <code>A</code> oder <code>V10</code></li>
-          <li><code>Vorgänger</code>: kommasepariert, z. B. <code>A, B</code></li>
-          <li><code>Dauer</code>: Zahl in Zeiteinheiten</li>
-          <li><code>Strg</code> + Mausrad zoomt die Arbeitsfläche</li>
-          <li>Der letzte Entwurf wird automatisch im Browser gespeichert</li>
+          <li>1. Mit <code>Neue Kachel</code> legst du einen neuen Vorgang an.</li>
+          <li>2. Trage <code>ID</code>, <code>Bezeichnung</code> und <code>Dauer</code> in die Kachel ein.</li>
+          <li>3. Für einen Pfeil klickst du rechts auf den Punkt der ersten Kachel und dann links auf den Punkt der Ziel-Kachel.</li>
+          <li>4. Einen Pfeil kannst du anklicken und dann mit <code>Entf</code> oder per Rechtsklick löschen.</li>
+          <li>5. Mit <code>Prüfen & berechnen</code> wird dein Netzplan ausgewertet.</li>
+          <li>6. Mit <code>Rückgängig</code>, <code>Wiederherstellen</code>, <code>Strg + Z</code> und <code>Strg + Y</code> kannst du bis zu 10 Schritte zurück oder vor gehen.</li>
+          <li>7. Mit <code>Strg</code> + Mausrad zoomst du in die Arbeitsfläche.</li>
         </ul>
       </div>
 
@@ -121,7 +125,6 @@
             <button id="zoom-out-btn" type="button" class="secondary">-</button>
             <span id="zoom-level" class="zoom-level">100 %</span>
             <button id="zoom-in-btn" type="button" class="secondary">+</button>
-            <button id="zoom-reset-btn" type="button" class="secondary">Reset</button>
           </div>
           <p id="status" class="status">Bereit.</p>
         </div>
@@ -164,6 +167,8 @@
 
   <template id="node-template">
     <article class="node-card">
+      <button class="connection-point connection-point-in" data-connector="in" type="button" aria-label="Eingehende Verbindung"></button>
+      <button class="connection-point connection-point-out" data-connector="out" type="button" aria-label="Ausgehende Verbindung"></button>
       <div class="node-topline">
         <label class="outer-field">
           <span>FAZ</span>
@@ -231,6 +236,10 @@
       </div>
     </article>
   </template>
+
+  <div id="connection-context-menu" class="context-menu hidden">
+    <button id="delete-connection-btn" type="button" class="ghost danger">Pfeil löschen</button>
+  </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="app.js"></script>
