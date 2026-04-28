@@ -8,6 +8,30 @@ const validationResultsElement = document.getElementById("validation-results");
 const statusElement = document.getElementById("status");
 const zoomLevelElement = document.getElementById("zoom-level");
 const showSolutionButton = document.getElementById("show-solution-btn");
+const saveBrowserButton = document.getElementById("save-browser-btn");
+const loadBrowserButton = document.getElementById("load-browser-btn");
+const saveProjectButton = document.getElementById("save-project-btn");
+const openProjectButton = document.getElementById("open-project-btn");
+const deleteProjectButton = document.getElementById("delete-project-btn");
+const exportSvgButton = document.getElementById("export-svg-btn");
+const exportPngButton = document.getElementById("export-png-btn");
+const exportPdfButton = document.getElementById("export-pdf-btn");
+const printButton = document.getElementById("print-btn");
+const projectNameInput = document.getElementById("project-name-input");
+const savedProjectsSelect = document.getElementById("saved-projects-select");
+const taskModeButton = document.getElementById("task-mode-btn");
+const solutionModeButton = document.getElementById("solution-mode-btn");
+const graphicViewButton = document.getElementById("graphic-view-btn");
+const tableViewButton = document.getElementById("table-view-btn");
+const tableBody = document.getElementById("table-body");
+const graphicPanel = document.getElementById("graphic-panel");
+const tablePanel = document.getElementById("table-panel");
+
+const NODE_WIDTH = 280;
+const NODE_HEIGHT = 238;
+const EXPORT_PADDING = 48;
+const LOCAL_STORAGE_KEY = "netzplan-editor-save";
+const PROJECTS_STORAGE_KEY = "netzplan-editor-projects";
 
 const state = {
   nodes: [],
@@ -21,6 +45,9 @@ const state = {
   zoom: 0.8,
   offsetX: 160,
   offsetY: 120,
+  mode: "task",
+  view: "graphic",
+  projectName: "Mein Netzplan",
 };
 
 const demoNodes = [
@@ -60,6 +87,12 @@ function normalizeNodes(rawNodes) {
     normalized.label = node.label || "";
     normalized.duration = node.duration ?? "";
     normalized.predecessors = node.predecessors || "";
+    normalized.faz = node.faz ?? "";
+    normalized.fez = node.fez ?? "";
+    normalized.saz = node.saz ?? "";
+    normalized.sez = node.sez ?? "";
+    normalized.gp = node.gp ?? "";
+    normalized.fp = node.fp ?? "";
     normalized.x = Number(node.x) || normalized.x;
     normalized.y = Number(node.y) || normalized.y;
     return normalized;
@@ -111,6 +144,216 @@ function applySolutionValues() {
 
   state.lastErrors = [];
   render();
+}
+
+function escapeXml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+function getSerializableNodes() {
+  return state.nodes.map((node) => ({
+    id: node.id,
+    label: node.label,
+    duration: node.duration,
+    predecessors: node.predecessors,
+    faz: node.faz,
+    fez: node.fez,
+    saz: node.saz,
+    sez: node.sez,
+    gp: node.gp,
+    fp: node.fp,
+    x: node.x,
+    y: node.y,
+  }));
+}
+
+function getSerializableState() {
+  return {
+    projectName: state.projectName,
+    nodes: getSerializableNodes(),
+    zoom: state.zoom,
+    offsetX: state.offsetX,
+    offsetY: state.offsetY,
+    mode: state.mode,
+    view: state.view,
+    savedAt: new Date().toISOString(),
+  };
+}
+
+function readSavedProjects() {
+  try {
+    return JSON.parse(localStorage.getItem(PROJECTS_STORAGE_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function writeSavedProjects(projects) {
+  localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(projects));
+}
+
+function refreshSavedProjectsList() {
+  if (!savedProjectsSelect) {
+    return;
+  }
+
+  const projects = readSavedProjects();
+  savedProjectsSelect.innerHTML = "";
+
+  if (projects.length === 0) {
+    const option = document.createElement("option");
+    option.textContent = "Keine gespeicherten Projekte";
+    option.disabled = true;
+    savedProjectsSelect.appendChild(option);
+    return;
+  }
+
+  projects.forEach((project, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = project.projectName || `Projekt ${index + 1}`;
+    savedProjectsSelect.appendChild(option);
+  });
+}
+
+function saveToBrowser() {
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(getSerializableState()));
+    statusElement.textContent = "Plan im Browser gespeichert.";
+  } catch (error) {
+    statusElement.textContent = "Speichern im Browser ist fehlgeschlagen.";
+  }
+}
+
+function loadFromBrowser() {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (!raw) {
+      statusElement.textContent = "Es gibt noch keinen gespeicherten Plan.";
+      return;
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.nodes)) {
+      throw new Error("Kein gÃ¼ltiger Speicherstand gefunden.");
+    }
+
+    state.nodes = normalizeNodes(parsed.nodes);
+    state.zoom = typeof parsed.zoom === "number" ? parsed.zoom : 0.8;
+    state.offsetX = typeof parsed.offsetX === "number" ? parsed.offsetX : 160;
+    state.offsetY = typeof parsed.offsetY === "number" ? parsed.offsetY : 120;
+    markDirty("Gespeicherten Plan geladen. Bitte prÃ¼fen.");
+  } catch (error) {
+    statusElement.textContent = "Gespeicherten Plan konnte nicht geladen werden.";
+  }
+}
+
+function getExportBounds() {
+  if (state.nodes.length === 0) {
+    return { minX: 0, minY: 0, width: 1200, height: 800 };
+  }
+
+  const minX = Math.min(...state.nodes.map((node) => node.x)) - EXPORT_PADDING;
+  const minY = Math.min(...state.nodes.map((node) => node.y)) - EXPORT_PADDING;
+  const maxX = Math.max(...state.nodes.map((node) => node.x + NODE_WIDTH)) + EXPORT_PADDING;
+  const maxY = Math.max(...state.nodes.map((node) => node.y + NODE_HEIGHT)) + EXPORT_PADDING;
+
+  return {
+    minX,
+    minY,
+    width: Math.max(600, maxX - minX),
+    height: Math.max(400, maxY - minY),
+  };
+}
+
+function buildConnectionPath(sourceNode, targetNode, bounds) {
+  const sourceX = sourceNode.x + NODE_WIDTH - bounds.minX;
+  const sourceY = sourceNode.y + NODE_HEIGHT / 2 - bounds.minY;
+  const targetX = targetNode.x - bounds.minX;
+  const targetY = targetNode.y + NODE_HEIGHT / 2 - bounds.minY;
+  const midX = (sourceX + targetX) / 2;
+  return `M ${sourceX} ${sourceY} C ${midX} ${sourceY}, ${midX} ${targetY}, ${targetX} ${targetY}`;
+}
+
+function buildStandaloneSvg() {
+  const bounds = getExportBounds();
+  const metadata = JSON.stringify({
+    nodes: getSerializableNodes(),
+    zoom: state.zoom,
+    offsetX: state.offsetX,
+    offsetY: state.offsetY,
+  });
+
+  const lines = [];
+  state.nodes.forEach((node) => {
+    predecessorList(node).forEach((predecessorId) => {
+      const predecessorNode = state.nodes.find((entry) => entry.id === predecessorId);
+      if (!predecessorNode) {
+        return;
+      }
+
+      lines.push(
+        `<path d="${buildConnectionPath(predecessorNode, node, bounds)}" fill="none" stroke="${predecessorNode.critical && node.critical ? "#a71d31" : "#6b5640"}" stroke-width="3"/>`
+      );
+    });
+  });
+
+  const nodeMarkup = state.nodes.map((node) => {
+    const x = node.x - bounds.minX;
+    const y = node.y - bounds.minY;
+    const background = node.critical ? "#fff8f8" : "#ffffff";
+    const border = node.error ? "#c47000" : node.critical ? "#c15e6e" : "#8f7757";
+
+    return `
+      <g transform="translate(${x},${y})">
+        <rect x="0" y="0" width="${NODE_WIDTH}" height="${NODE_HEIGHT}" rx="20" ry="20" fill="${background}" stroke="${border}" stroke-width="1.5"/>
+        <text x="20" y="18" font-size="13" font-weight="700" fill="#2f2418">FAZ</text>
+        <text x="${NODE_WIDTH - 20}" y="18" font-size="13" font-weight="700" fill="#2f2418" text-anchor="end">FEZ</text>
+        <text x="20" y="38" font-size="16" fill="#2f2418">${escapeXml(node.faz || "-")}</text>
+        <text x="${NODE_WIDTH - 20}" y="38" font-size="16" fill="#2f2418" text-anchor="end">${escapeXml(node.fez || "-")}</text>
+        <rect x="14" y="48" width="${NODE_WIDTH - 28}" height="152" fill="#fffdf8" stroke="#8f7757" stroke-width="1.5"/>
+        <line x1="102" y1="48" x2="102" y2="124" stroke="#8f7757"/>
+        <line x1="14" y1="124" x2="${NODE_WIDTH - 14}" y2="124" stroke="#8f7757"/>
+        <line x1="163" y1="124" x2="163" y2="200" stroke="#8f7757"/>
+        <text x="24" y="70" font-size="12" font-weight="700" fill="#2f2418">Nr.</text>
+        <text x="114" y="70" font-size="12" font-weight="700" fill="#2f2418">Bezeichnung</text>
+        <text x="24" y="146" font-size="12" font-weight="700" fill="#2f2418">Dauer</text>
+        <text x="114" y="146" font-size="12" font-weight="700" fill="#2f2418">GP</text>
+        <text x="177" y="146" font-size="12" font-weight="700" fill="#2f2418">FP</text>
+        <text x="24" y="94" font-size="16" fill="#2f2418">${escapeXml(node.id || "-")}</text>
+        <text x="114" y="94" font-size="15" fill="#2f2418">${escapeXml(node.label || "-")}</text>
+        <text x="24" y="170" font-size="16" fill="#2f2418">${escapeXml(node.duration || "-")}</text>
+        <text x="114" y="170" font-size="16" fill="#2f2418">${escapeXml(node.gp || "-")}</text>
+        <text x="177" y="170" font-size="16" fill="#2f2418">${escapeXml(node.fp || "-")}</text>
+        <text x="20" y="220" font-size="13" font-weight="700" fill="#2f2418">SAZ</text>
+        <text x="${NODE_WIDTH - 20}" y="220" font-size="13" font-weight="700" fill="#2f2418" text-anchor="end">SEZ</text>
+        <text x="20" y="238" font-size="16" fill="#2f2418">${escapeXml(node.saz || "-")}</text>
+        <text x="${NODE_WIDTH - 20}" y="238" font-size="16" fill="#2f2418" text-anchor="end">${escapeXml(node.sez || "-")}</text>
+      </g>
+    `;
+  }).join("");
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${bounds.width}" height="${bounds.height}" viewBox="0 0 ${bounds.width} ${bounds.height}">
+  <metadata id="netzplan-data"><![CDATA[${metadata}]]></metadata>
+  <rect width="100%" height="100%" fill="#f7f1e6"/>
+  ${lines.join("")}
+  ${nodeMarkup}
+</svg>`;
+}
+
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function validateAndCalculate() {
@@ -508,14 +751,72 @@ function onCanvasWheel(event) {
 }
 
 function exportJson() {
-  const exportable = state.nodes.map(({ uid, faz, fez, saz, sez, gp, fp, critical, error, ...rest }) => rest);
-  const blob = new Blob([JSON.stringify(exportable, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "netzplan.json";
-  link.click();
-  URL.revokeObjectURL(url);
+  const blob = new Blob([JSON.stringify(getSerializableState(), null, 2)], { type: "application/json" });
+  downloadBlob("netzplan.json", blob);
+}
+
+function exportSvg() {
+  const blob = new Blob([buildStandaloneSvg()], { type: "image/svg+xml;charset=utf-8" });
+  downloadBlob("netzplan.svg", blob);
+}
+
+function svgToImageElement(svgMarkup) {
+  return new Promise((resolve, reject) => {
+    const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Die Grafik konnte nicht erzeugt werden."));
+    };
+    image.src = url;
+  });
+}
+
+async function exportPng() {
+  const svgMarkup = buildStandaloneSvg();
+  const image = await svgToImageElement(svgMarkup);
+  const bounds = getExportBounds();
+  const renderCanvas = document.createElement("canvas");
+  const scale = 2;
+  renderCanvas.width = Math.ceil(bounds.width * scale);
+  renderCanvas.height = Math.ceil(bounds.height * scale);
+  const context = renderCanvas.getContext("2d");
+  context.scale(scale, scale);
+  context.drawImage(image, 0, 0, bounds.width, bounds.height);
+
+  const blob = await new Promise((resolve) => renderCanvas.toBlob(resolve, "image/png"));
+  downloadBlob("netzplan.png", blob);
+}
+
+async function exportPdf() {
+  if (!window.jspdf?.jsPDF) {
+    throw new Error("PDF-Bibliothek konnte nicht geladen werden.");
+  }
+
+  const svgMarkup = buildStandaloneSvg();
+  const image = await svgToImageElement(svgMarkup);
+  const bounds = getExportBounds();
+  const renderCanvas = document.createElement("canvas");
+  renderCanvas.width = bounds.width * 2;
+  renderCanvas.height = bounds.height * 2;
+  const context = renderCanvas.getContext("2d");
+  context.scale(2, 2);
+  context.drawImage(image, 0, 0, bounds.width, bounds.height);
+  const imageData = renderCanvas.toDataURL("image/png");
+
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({
+    orientation: bounds.width >= bounds.height ? "landscape" : "portrait",
+    unit: "pt",
+    format: [bounds.width, bounds.height],
+  });
+  pdf.addImage(imageData, "PNG", 0, 0, bounds.width, bounds.height);
+  pdf.save("netzplan.pdf");
 }
 
 function importJson(file) {
@@ -536,6 +837,33 @@ function importJson(file) {
   reader.readAsText(file);
 }
 
+function importSvg(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const svgText = String(reader.result);
+      const match = svgText.match(/<metadata id="netzplan-data"><!\[CDATA\[([\s\S]*?)\]\]><\/metadata>/);
+      if (!match) {
+        throw new Error("In der SVG wurde kein Netzplan gefunden.");
+      }
+
+      const parsed = JSON.parse(match[1]);
+      if (!Array.isArray(parsed.nodes)) {
+        throw new Error("Die SVG enthÃ¤lt keine gÃ¼ltigen Netzplan-Daten.");
+      }
+
+      state.nodes = normalizeNodes(parsed.nodes);
+      state.zoom = typeof parsed.zoom === "number" ? parsed.zoom : state.zoom;
+      state.offsetX = typeof parsed.offsetX === "number" ? parsed.offsetX : state.offsetX;
+      state.offsetY = typeof parsed.offsetY === "number" ? parsed.offsetY : state.offsetY;
+      markDirty("SVG importiert. Bitte prÃ¼fen.");
+    } catch (error) {
+      statusElement.textContent = error.message;
+    }
+  };
+  reader.readAsText(file);
+}
+
 document.getElementById("add-node-btn").addEventListener("click", () => {
   state.nodes.push(createEmptyNode(80 + state.nodes.length * 24, 80 + state.nodes.length * 24));
   markDirty("Vorgang hinzugefÃ¼gt. Bitte prÃ¼fen.");
@@ -546,6 +874,8 @@ document.getElementById("load-demo-btn").addEventListener("click", () => {
   state.nodes = normalizeNodes(demoNodes);
   validateAndCalculate();
 });
+saveBrowserButton.addEventListener("click", saveToBrowser);
+loadBrowserButton.addEventListener("click", loadFromBrowser);
 document.getElementById("zoom-in-btn").addEventListener("click", () => setZoom(state.zoom + 0.1));
 document.getElementById("zoom-out-btn").addEventListener("click", () => setZoom(state.zoom - 0.1));
 document.getElementById("zoom-reset-btn").addEventListener("click", () => {
@@ -556,11 +886,40 @@ document.getElementById("zoom-reset-btn").addEventListener("click", () => {
 });
 showSolutionButton.addEventListener("click", applySolutionValues);
 document.getElementById("export-btn").addEventListener("click", exportJson);
+exportSvgButton.addEventListener("click", () => {
+  exportSvg();
+  statusElement.textContent = "SVG exportiert.";
+});
+exportPngButton.addEventListener("click", () => {
+  statusElement.textContent = "PNG wird erstellt...";
+  exportPng()
+    .then(() => {
+      statusElement.textContent = "PNG exportiert.";
+    })
+    .catch((error) => {
+      statusElement.textContent = error.message;
+    });
+});
+exportPdfButton.addEventListener("click", () => {
+  statusElement.textContent = "PDF wird erstellt...";
+  exportPdf()
+    .then(() => {
+      statusElement.textContent = "PDF exportiert.";
+    })
+    .catch((error) => {
+      statusElement.textContent = error.message;
+    });
+});
 document.getElementById("import-input").addEventListener("change", (event) => {
   const [file] = event.target.files || [];
-  if (file) {
+  if (file && file.name.toLowerCase().endsWith(".json")) {
     importJson(file);
+  } else if (file && file.name.toLowerCase().endsWith(".svg")) {
+    importSvg(file);
+  } else if (file) {
+    statusElement.textContent = "Bitte eine JSON- oder SVG-Datei wÃ¤hlen.";
   }
+  event.target.value = "";
 });
 
 canvas.addEventListener("pointerdown", startPan);
@@ -569,5 +928,290 @@ window.addEventListener("pointermove", onPointerMove);
 window.addEventListener("pointerup", onPointerUp);
 window.addEventListener("resize", render);
 
-state.nodes = normalizeNodes(demoNodes);
-validateAndCalculate();
+try {
+  const savedState = localStorage.getItem(LOCAL_STORAGE_KEY);
+  if (savedState) {
+    loadFromBrowser();
+  } else {
+    state.nodes = normalizeNodes(demoNodes);
+    validateAndCalculate();
+  }
+} catch (error) {
+  state.nodes = normalizeNodes(demoNodes);
+  validateAndCalculate();
+}
+
+
+
+function getDisplayValue(node, field) {
+  if (state.mode === "solution" && ["faz", "fez", "saz", "sez", "gp", "fp"].includes(field)) {
+    const expected = state.expectedValues.get(node.uid);
+    if (expected) {
+      return String(expected[field] ?? "");
+    }
+  }
+  return String(node[field] ?? "");
+}
+
+function applyFieldState(element, node, field) {
+  element.classList.remove("field-correct", "field-wrong", "field-pending");
+  if (!["faz", "fez", "saz", "sez", "gp", "fp"].includes(field)) {
+    return;
+  }
+  const expected = state.expectedValues.get(node.uid);
+  if (state.isDirty || !expected) {
+    element.classList.add("field-pending");
+    return;
+  }
+  const isCorrect = String(node[field] ?? "").trim() === String(expected[field]);
+  element.classList.add(isCorrect ? "field-correct" : "field-wrong");
+}
+
+function renderTable() {
+  if (!tableBody) {
+    return;
+  }
+  tableBody.innerHTML = "";
+  const fields = ["id", "label", "duration", "predecessors", "faz", "fez", "saz", "sez", "gp", "fp"];
+  state.nodes.forEach((node) => {
+    const row = document.createElement("tr");
+    fields.forEach((field) => {
+      const cell = document.createElement("td");
+      const input = document.createElement("input");
+      input.className = "table-input";
+      input.value = getDisplayValue(node, field);
+      input.disabled = state.mode === "solution" && ["faz", "fez", "saz", "sez", "gp", "fp"].includes(field);
+      applyFieldState(input, node, field);
+      input.addEventListener("input", (event) => {
+        node[field] = event.target.value;
+        markDirty();
+      });
+      cell.appendChild(input);
+      row.appendChild(cell);
+    });
+    tableBody.appendChild(row);
+  });
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  render();
+}
+
+function setView(view) {
+  state.view = view;
+  if (graphicPanel) {
+    graphicPanel.classList.toggle("hidden", view !== "graphic");
+  }
+  if (tablePanel) {
+    tablePanel.classList.toggle("hidden", view !== "table");
+  }
+  graphicViewButton.classList.toggle("active-toggle", view === "graphic");
+  tableViewButton.classList.toggle("active-toggle", view === "table");
+}
+
+function saveNamedProject() {
+  state.projectName = projectNameInput.value.trim() || "Mein Netzplan";
+  projectNameInput.value = state.projectName;
+  const projects = readSavedProjects();
+  const payload = getSerializableState();
+  const existingIndex = projects.findIndex((entry) => entry.projectName === payload.projectName);
+  if (existingIndex >= 0) {
+    projects[existingIndex] = payload;
+  } else {
+    projects.push(payload);
+  }
+  writeSavedProjects(projects);
+  refreshSavedProjectsList();
+  statusElement.textContent = "Projekt gespeichert.";
+}
+
+function openSelectedProject() {
+  const projects = readSavedProjects();
+  const index = Number(savedProjectsSelect.value);
+  if (!Number.isInteger(index) || !projects[index]) {
+    statusElement.textContent = "Bitte ein Projekt auswählen.";
+    return;
+  }
+  const project = projects[index];
+  state.projectName = project.projectName || "Mein Netzplan";
+  state.nodes = normalizeNodes(project.nodes);
+  state.zoom = typeof project.zoom === "number" ? project.zoom : 0.8;
+  state.offsetX = typeof project.offsetX === "number" ? project.offsetX : 160;
+  state.offsetY = typeof project.offsetY === "number" ? project.offsetY : 120;
+  state.mode = project.mode === "solution" ? "solution" : "task";
+  state.view = project.view === "table" ? "table" : "graphic";
+  markDirty("Projekt geladen. Bitte prüfen.");
+}
+
+function deleteSelectedProject() {
+  const projects = readSavedProjects();
+  const index = Number(savedProjectsSelect.value);
+  if (!Number.isInteger(index) || !projects[index]) {
+    statusElement.textContent = "Bitte ein Projekt auswählen.";
+    return;
+  }
+  projects.splice(index, 1);
+  writeSavedProjects(projects);
+  refreshSavedProjectsList();
+  statusElement.textContent = "Projekt gelöscht.";
+}
+
+function renderSummary() {
+  const criticalPath = state.nodes
+    .filter((node) => node.critical)
+    .sort((left, right) => Number(left.faz) - Number(right.faz))
+    .map((node) => node.id);
+
+  summaryElement.innerHTML = [
+    `<p><strong>Projekt:</strong> ${state.projectName || "Mein Netzplan"}</p>`,
+    `<p><strong>Vorgänge:</strong> ${state.nodes.length}</p>`,
+    `<p><strong>Projektdauer:</strong> ${state.lastProjectDuration}</p>`,
+    `<p><strong>Kritischer Pfad:</strong> ${criticalPath.length ? criticalPath.join(" -> ") : "noch nicht berechnet"}</p>`,
+  ].join("");
+
+  if (state.nodes.length === 0) {
+    validationResultsElement.innerHTML = "<p>Noch keine Vorgänge vorhanden.</p>";
+    statusElement.textContent = "Bereit.";
+    showSolutionButton.hidden = true;
+    return;
+  }
+  if (state.isDirty) {
+    validationResultsElement.innerHTML = '<p>Noch nicht geprüft. Drücke auf "Prüfen & berechnen".</p>';
+    statusElement.textContent = "Änderungen vorhanden.";
+    showSolutionButton.hidden = true;
+    return;
+  }
+  if (state.lastErrors.length > 0) {
+    validationResultsElement.innerHTML = `<p><strong>Fehler gefunden:</strong></p><ul>${state.lastErrors.map((error) => `<li>${error}</li>`).join("")}</ul>`;
+    statusElement.textContent = "Bitte Eingaben prüfen.";
+    showSolutionButton.hidden = false;
+    return;
+  }
+  validationResultsElement.innerHTML = "<p><strong>Prüfung:</strong> Alles sieht korrekt aus.</p>";
+  statusElement.textContent = "Berechnung erfolgreich.";
+  showSolutionButton.hidden = true;
+}
+
+function render() {
+  applyViewport();
+  projectNameInput.value = state.projectName;
+  taskModeButton.classList.toggle("active-toggle", state.mode === "task");
+  solutionModeButton.classList.toggle("active-toggle", state.mode === "solution");
+  setView(state.view);
+  nodesLayer.innerHTML = "";
+  connectionsLayer.innerHTML = "";
+
+  state.nodes.forEach((node) => {
+    const fragment = nodeTemplate.content.cloneNode(true);
+    const card = fragment.querySelector(".node-card");
+    card.dataset.uid = node.uid;
+    card.style.left = `${node.x}px`;
+    card.style.top = `${node.y}px`;
+    card.classList.toggle("is-critical", node.critical);
+    card.classList.toggle("has-error", Boolean(node.error));
+    fragment.querySelectorAll("[data-field]").forEach((element) => {
+      const field = element.dataset.field;
+      element.value = getDisplayValue(node, field);
+      const isResultField = ["faz", "fez", "saz", "sez", "gp", "fp"].includes(field);
+      element.disabled = state.mode === "solution" && isResultField;
+      applyFieldState(element, node, field);
+      element.addEventListener("input", (event) => {
+        node[field] = event.target.value;
+        markDirty();
+      });
+      element.addEventListener("pointerdown", (event) => event.stopPropagation());
+    });
+    fragment.querySelector("[data-action='delete']").addEventListener("click", () => {
+      state.nodes = state.nodes.filter((entry) => entry.uid !== node.uid);
+      markDirty("Vorgang gelöscht. Bitte prüfen.");
+    });
+    fragment.querySelector("[data-action='duplicate']").addEventListener("click", () => {
+      const duplicate = createEmptyNode(node.x + 32, node.y + 32);
+      duplicate.id = `${node.id}_Kopie`;
+      duplicate.label = node.label;
+      duplicate.duration = node.duration;
+      duplicate.predecessors = node.predecessors;
+      duplicate.faz = node.faz;
+      duplicate.fez = node.fez;
+      duplicate.saz = node.saz;
+      duplicate.sez = node.sez;
+      duplicate.gp = node.gp;
+      duplicate.fp = node.fp;
+      state.nodes.push(duplicate);
+      markDirty("Vorgang kopiert. Bitte prüfen.");
+    });
+    card.addEventListener("pointerdown", (event) => startDrag(event, node.uid));
+    nodesLayer.appendChild(fragment);
+  });
+
+  drawConnections();
+  renderTable();
+  renderSummary();
+  refreshSavedProjectsList();
+}
+
+saveProjectButton.addEventListener("click", saveNamedProject);
+openProjectButton.addEventListener("click", openSelectedProject);
+deleteProjectButton.addEventListener("click", deleteSelectedProject);
+taskModeButton.addEventListener("click", () => setMode("task"));
+solutionModeButton.addEventListener("click", () => setMode("solution"));
+graphicViewButton.addEventListener("click", () => setView("graphic"));
+tableViewButton.addEventListener("click", () => setView("table"));
+printButton.addEventListener("click", () => window.print());
+projectNameInput.addEventListener("input", () => {
+  state.projectName = projectNameInput.value.trim() || "Mein Netzplan";
+  saveToBrowser();
+});
+refreshSavedProjectsList();
+setView(state.view);
+render();
+
+
+
+function loadFromBrowser() {
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (!raw) {
+      statusElement.textContent = "Es gibt noch keinen gespeicherten Plan.";
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.nodes)) {
+      throw new Error("Kein gültiger Speicherstand gefunden.");
+    }
+    state.projectName = parsed.projectName || "Mein Netzplan";
+    state.nodes = normalizeNodes(parsed.nodes);
+    state.zoom = typeof parsed.zoom === "number" ? parsed.zoom : 0.8;
+    state.offsetX = typeof parsed.offsetX === "number" ? parsed.offsetX : 160;
+    state.offsetY = typeof parsed.offsetY === "number" ? parsed.offsetY : 120;
+    state.mode = parsed.mode === "solution" ? "solution" : "task";
+    state.view = parsed.view === "table" ? "table" : "graphic";
+    markDirty("Gespeicherten Plan geladen. Bitte prüfen.");
+  } catch (error) {
+    statusElement.textContent = "Gespeicherten Plan konnte nicht geladen werden.";
+  }
+}
+
+function importJson(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(String(reader.result));
+      if (!parsed || !Array.isArray(parsed.nodes)) {
+        throw new Error("Die JSON-Datei muss einen gespeicherten Netzplan enthalten.");
+      }
+      state.projectName = parsed.projectName || "Mein Netzplan";
+      state.nodes = normalizeNodes(parsed.nodes);
+      state.zoom = typeof parsed.zoom === "number" ? parsed.zoom : state.zoom;
+      state.offsetX = typeof parsed.offsetX === "number" ? parsed.offsetX : state.offsetX;
+      state.offsetY = typeof parsed.offsetY === "number" ? parsed.offsetY : state.offsetY;
+      state.mode = parsed.mode === "solution" ? "solution" : "task";
+      state.view = parsed.view === "table" ? "table" : "graphic";
+      markDirty("Import geladen. Bitte prüfen.");
+    } catch (error) {
+      statusElement.textContent = error.message;
+    }
+  };
+  reader.readAsText(file);
+}

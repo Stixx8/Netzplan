@@ -12,9 +12,7 @@
       <div class="panel">
         <p class="eyebrow">Netzplan</p>
         <h1>Einfacher Editor</h1>
-        <p class="intro">
-          Vorgang anlegen, Vorgänger als IDs eintragen und die Zeiten erst per Knopfdruck prüfen und berechnen.
-        </p>
+        <p class="intro">Netzpläne erstellen, prüfen, speichern, drucken und als Grafik oder PDF exportieren.</p>
         <div class="actions">
           <button id="add-node-btn" type="button">Vorgang hinzufügen</button>
           <button id="recalculate-btn" type="button" class="secondary">Prüfen & berechnen</button>
@@ -23,14 +21,60 @@
 
       <div class="panel">
         <div class="panel-header">
+          <h2>Projekt</h2>
+        </div>
+        <label class="stack-field">
+          <span>Projektname</span>
+          <input id="project-name-input" type="text" placeholder="Mein Netzplan">
+        </label>
+        <div class="io-actions compact">
+          <button id="save-browser-btn" type="button" class="secondary">Entwurf speichern</button>
+          <button id="load-browser-btn" type="button" class="secondary">Entwurf laden</button>
+        </div>
+        <div class="saved-projects">
+          <div class="panel-header mini">
+            <h3>Gespeicherte Projekte</h3>
+          </div>
+          <select id="saved-projects-select" class="saved-projects-select" size="5"></select>
+          <div class="io-actions compact">
+            <button id="save-project-btn" type="button" class="secondary">Projekt speichern</button>
+            <button id="open-project-btn" type="button" class="secondary">Projekt öffnen</button>
+            <button id="delete-project-btn" type="button" class="secondary danger-soft">Projekt löschen</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Ansicht</h2>
+        </div>
+        <div class="mode-switch">
+          <button id="task-mode-btn" type="button" class="secondary active-toggle">Aufgabenmodus</button>
+          <button id="solution-mode-btn" type="button" class="secondary">Lösungsmodus</button>
+        </div>
+        <div class="mode-switch">
+          <button id="graphic-view-btn" type="button" class="secondary active-toggle">Grafik</button>
+          <button id="table-view-btn" type="button" class="secondary">Tabelle</button>
+        </div>
+        <div class="legend">
+          <p><strong>Legende</strong></p>
+          <p><span class="legend-dot correct"></span> richtig</p>
+          <p><span class="legend-dot wrong"></span> falsch</p>
+          <p><span class="legend-dot pending"></span> noch nicht geprüft</p>
+          <p><span class="legend-dot critical"></span> kritischer Vorgang</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
           <h2>Hinweise</h2>
         </div>
         <ul class="tips">
-          <li>`ID`: eindeutiger Name, z. B. `A` oder `V10`</li>
-          <li>`Vorgänger`: kommasepariert, z. B. `A, B`</li>
-          <li>`Dauer`: Zahl in Zeiteinheiten</li>
-          <li>Auch `FAZ`, `FEZ`, `SAZ`, `SEZ`, `GP` und `FP` können eingetragen werden</li>
-          <li>Die Karten können mit der Maus verschoben werden</li>
+          <li><code>ID</code>: eindeutiger Name, z. B. <code>A</code> oder <code>V10</code></li>
+          <li><code>Vorgänger</code>: kommasepariert, z. B. <code>A, B</code></li>
+          <li><code>Dauer</code>: Zahl in Zeiteinheiten</li>
+          <li><code>Strg</code> + Mausrad zoomt die Arbeitsfläche</li>
+          <li>Der letzte Entwurf wird automatisch im Browser gespeichert</li>
         </ul>
       </div>
 
@@ -56,8 +100,12 @@
         <div class="io-actions">
           <button id="load-demo-btn" type="button" class="secondary">Beispiel laden</button>
           <button id="export-btn" type="button" class="secondary">JSON exportieren</button>
-          <label class="import-label" for="import-input">JSON importieren</label>
-          <input id="import-input" type="file" accept="application/json">
+          <button id="export-svg-btn" type="button" class="secondary">SVG exportieren</button>
+          <button id="export-png-btn" type="button" class="secondary">PNG exportieren</button>
+          <button id="export-pdf-btn" type="button" class="secondary">PDF exportieren</button>
+          <button id="print-btn" type="button" class="secondary">Druckansicht</button>
+          <label class="import-label" for="import-input">JSON / SVG importieren</label>
+          <input id="import-input" type="file" accept=".json,.svg,application/json,image/svg+xml">
         </div>
       </div>
     </aside>
@@ -79,14 +127,38 @@
         </div>
       </div>
 
-      <div id="canvas" class="canvas">
-        <div id="viewport" class="viewport">
-          <div id="scene" class="scene">
-            <svg id="connections" class="connections" aria-hidden="true"></svg>
-            <div id="nodes-layer" class="nodes-layer"></div>
+      <section id="graphic-panel" class="view-panel">
+        <div id="canvas" class="canvas">
+          <div id="viewport" class="viewport">
+            <div id="scene" class="scene">
+              <svg id="connections" class="connections" aria-hidden="true"></svg>
+              <div id="nodes-layer" class="nodes-layer"></div>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
+
+      <section id="table-panel" class="view-panel hidden">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Bezeichnung</th>
+                <th>Dauer</th>
+                <th>Vorgänger</th>
+                <th>FAZ</th>
+                <th>FEZ</th>
+                <th>SAZ</th>
+                <th>SEZ</th>
+                <th>GP</th>
+                <th>FP</th>
+              </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -160,6 +232,7 @@
     </article>
   </template>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
