@@ -1005,34 +1005,39 @@ function drawConnections() {
       const { x: sourceX, y: sourceY } = getConnectorCenter(predecessorNode, sourceElement, ".connection-point-out");
       const { x: targetX, y: targetY } = getConnectorCenter(node, targetElement, ".connection-point-in");
       const midX = (sourceX + targetX) / 2;
+      const pathData = `M ${sourceX} ${sourceY} C ${midX} ${sourceY}, ${midX} ${targetY}, ${targetX} ${targetY}`;
+      const hitbox = document.createElementNS("http://www.w3.org/2000/svg", "path");
       const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      line.setAttribute("d", `M ${sourceX} ${sourceY} C ${midX} ${sourceY}, ${midX} ${targetY}, ${targetX} ${targetY}`);
+      hitbox.setAttribute("d", pathData);
+      hitbox.setAttribute("class", "connection-hitbox");
+      line.setAttribute("d", pathData);
       line.setAttribute("class", "connection-line");
       line.setAttribute("marker-end", "url(#arrowhead)");
       line.dataset.sourceId = predecessorNode.id;
       line.dataset.targetUid = node.uid;
+      hitbox.dataset.sourceId = predecessorNode.id;
+      hitbox.dataset.targetUid = node.uid;
 
       if (predecessorNode.critical && node.critical) {
         line.classList.add("critical");
       }
       line.classList.toggle("is-selected", isSelectedConnection(predecessorNode.id, node.uid));
-      line.addEventListener("pointerdown", (event) => {
-        event.stopPropagation();
-      });
-      line.addEventListener("click", (event) => {
+      const selectConnectionLine = (event) => {
         event.stopPropagation();
         closeConnectionContextMenu();
         selectConnection(predecessorNode.id, node.uid);
         clearPendingConnection();
         statusElement.textContent = "Pfeil ausgewÃ¤hlt. Mit Entf lÃ¶schen oder Rechtsklick fÃ¼r MenÃ¼.";
         render();
-      });
-      line.addEventListener("dblclick", (event) => {
+      };
+
+      const deleteConnectionLine = (event) => {
         event.preventDefault();
         event.stopPropagation();
         deleteConnectionByIds(predecessorNode.id, node.uid);
-      });
-      line.addEventListener("contextmenu", (event) => {
+      };
+
+      const openConnectionMenu = (event) => {
         event.preventDefault();
         event.stopPropagation();
         selectConnection(predecessorNode.id, node.uid);
@@ -1040,8 +1045,18 @@ function drawConnections() {
         statusElement.textContent = "Pfeil ausgewÃ¤hlt. KontextmenÃ¼ geÃ¶ffnet.";
         render();
         openConnectionContextMenu(event.clientX, event.clientY);
+      };
+
+      [hitbox, line].forEach((element) => {
+        element.addEventListener("pointerdown", (event) => {
+          event.stopPropagation();
+        });
+        element.addEventListener("click", selectConnectionLine);
+        element.addEventListener("dblclick", deleteConnectionLine);
+        element.addEventListener("contextmenu", openConnectionMenu);
       });
 
+      connectionsLayer.appendChild(hitbox);
       connectionsLayer.appendChild(line);
     });
   });

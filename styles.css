@@ -287,11 +287,24 @@ button:disabled {
   fill: none;
   stroke: var(--line);
   stroke-width: 3;
+  stroke-linecap: round;
   cursor: pointer;
   pointer-events: stroke;
 }
 
 .connection-line.critical { stroke: var(--critical); }
+.connection-hitbox {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 20;
+  stroke-linecap: round;
+  cursor: pointer;
+  pointer-events: stroke;
+}
+.connection-hitbox:hover + .connection-line,
+.connection-line:hover {
+  stroke-width: 4;
+}
 .connection-line.is-selected {
   stroke: var(--accent);
   stroke-width: 4;
